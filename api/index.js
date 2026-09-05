@@ -1,6 +1,6 @@
 const DEFAULT_USER_AGENT = 'clash-verge/v2.4.3';
+const REQUEST_TIMEOUT_MS = 20000;
 
-// MiSub 需要这些响应头来读取流量、到期时间、文件名等信息
 const PASS_THROUGH_RESPONSE_HEADERS = [
   'subscription-userinfo',
   'profile-update-interval',
@@ -16,7 +16,6 @@ function createCorsHeaders() {
     'access-control-allow-origin': '*',
     'access-control-allow-methods': 'GET,HEAD,OPTIONS',
     'access-control-allow-headers': 'content-type,user-agent,x-user-agent',
-    // 让浏览器调试时也能看到这些自定义响应头
     'access-control-expose-headers': PASS_THROUGH_RESPONSE_HEADERS.join(', '),
   };
 }
@@ -32,13 +31,11 @@ function sanitizeHeaderValue(value) {
 }
 
 function getUpstreamUserAgent(req, requestUrl) {
-  // 优先使用 MiSub 自动拼接到代理前缀里的 ua 参数：
-  //   /api?ua=clash-verge%2Fv2.4.3&url=<encoded-subscription-url>
-  // 其次兼容手动传入的 x-user-agent 请求头，最后使用默认 Clash Verge UA。
   return sanitizeHeaderValue(
     requestUrl.searchParams.get('ua') ||
-    req.headers['x-user-agent'] ||
-    DEFAULT_USER_AGENT
+      req.headers['x-user-agent'] ||
+      req.headers['user-agent'] ||
+      DEFAULT_USER_AGENT
   );
 }
 
@@ -66,7 +63,7 @@ module.exports = async function handler(req, res) {
   const targetUrl = requestUrl.searchParams.get('url');
 
   if (!targetUrl) {
-    sendText(res, 400, 'Miss URL');
+    sendText(res, 400, 'Missing URL');
     return;
   }
 
@@ -83,26 +80,34 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const upstreamResponse = await fetch(parsedTarget.toString(), {
-    method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-    redirect: 'follow',
-    headers: {
-      // 很多机场会根据 UA 返回不同格式；Clash 类 UA 通常会返回 YAML 和 subscription-userinfo。
-      // 注意：MiSub 发给代理的 User-Agent 不一定会自动成为代理访问机场时的 UA，
-      // 所以这里必须显式使用 ua 参数 / x-user-agent 覆盖上游请求 UA。
-      'user-agent': getUpstreamUserAgent(req, requestUrl),
-      'accept': '*/*',
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let upstreamResponse;
+  try {
+    upstreamResponse = await fetch(parsedTarget.toString(), {
+      method: req.method,
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'user-agent': getUpstreamUserAgent(req, requestUrl),
+        accept: '*/*',
+      },
+    });
+  } catch (error) {
+    const message = error.name === 'AbortError' ? 'Upstream request timed out' : 'Unable to fetch upstream URL';
+    sendText(res, 502, message);
+    return;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const responseHeaders = createCorsHeaders();
-
   for (const headerName of PASS_THROUGH_RESPONSE_HEADERS) {
     const value = upstreamResponse.headers.get(headerName);
     if (value) responseHeaders[headerName] = value;
   }
 
-  // 如果上游没有 Content-Type，给一个安全默认值
   if (!responseHeaders['content-type']) {
     responseHeaders['content-type'] = 'text/plain; charset=utf-8';
   }
@@ -115,6 +120,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const body = Buffer.from(await upstreamResponse.arrayBuffer());
-  res.end(body);
+  try {
+    res.end(Buffer.from(await upstreamResponse.arrayBuffer()));
+  } catch {
+    if (!res.headersSent) sendText(res, 502, 'Unable to read upstream response');
+  }
 };
