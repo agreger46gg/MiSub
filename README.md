@@ -4,7 +4,9 @@
 
 ## 部署
 
-1. 將此專案匯入 [Vercel](https://vercel.com/new)，或在專案根目錄執行：
+1. 將此專案匯入 [Vercel](https://vercel.com/new)。儲存庫已包含 `vercel.json`，不需要設定 Build Command；完成匯入後即可部署，之後每次 push 到已連結分支會由 Vercel 自動重新部署。
+
+	或在專案根目錄執行：
 
 	```bash
 	npx vercel deploy
