@@ -1,0 +1,12 @@
+{
+  "name": "misub-fetch-proxy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A Vercel Node.js Function fetch proxy for MiSub",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
