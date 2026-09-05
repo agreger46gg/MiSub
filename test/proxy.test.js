@@ -49,3 +49,20 @@ test('proxies the body, selected headers, and user agent', async (t) => {
   assert.match(response.headers['subscription-userinfo'], /download=2/);
   assert.equal(response.headers['x-private-header'], undefined);
 });
+
+test('uses the incoming User-Agent when no ua query is provided', async (t) => {
+  const server = http.createServer((req, res) => {
+    assert.equal(req.headers['user-agent'], 'custom-client/1.0');
+    res.end('vless://node@example.com:443');
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  t.after(() => server.close());
+
+  const target = `http://127.0.0.1:${server.address().port}/subscription`;
+  const response = await invoke('GET', `/api?url=${encodeURIComponent(target)}`, {
+    'user-agent': 'custom-client/1.0',
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.toString(), 'vless://node@example.com:443');
+});
